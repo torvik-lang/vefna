@@ -1,0 +1,168 @@
+// scaffold.tv - `vefna new <name>`: a ready-to-build starter site.
+
+df scaffold_config(name: str) -> str {
+    set parts: list<str> = list_new();
+    push(parts, "# vefna.site - site configuration (key: value)");
+    push(parts, str_concat("title: ", name));
+    push(parts, "description: A site woven by Vefna");
+    push(parts, "author: ");
+    push(parts, "# Base URL prefix for links and assets. Leave empty to serve from the root.");
+    push(parts, "url: ");
+    push(parts, "");
+    return join(parts, "\n");
+}
+
+df scaffold_template() -> str {
+    fixed q: str = '"';
+    set parts: list<str> = list_new();
+    push(parts, "<!DOCTYPE html>");
+    push(parts, str_concat("<html lang=", q, "en", q, ">"));
+    push(parts, "<head>");
+    push(parts, str_concat("  <meta charset=", q, "utf-8", q, ">"));
+    push(parts, str_concat("  <meta name=", q, "viewport", q, " content=", q, "width=device-width, initial-scale=1", q, ">"));
+    push(parts, "  <title>{{title}} - {{site_title}}</title>");
+    push(parts, str_concat("  <meta name=", q, "description", q, " content=", q, "{{description}}", q, ">"));
+    push(parts, str_concat("  <link rel=", q, "stylesheet", q, " href=", q, "{{site_url}}/static/style.css", q, ">"));
+    push(parts, "</head>");
+    push(parts, "<body>");
+    push(parts, "  <header>");
+    push(parts, str_concat("    <a class=", q, "site-title", q, " href=", q, "{{site_url}}/", q, ">{{site_title}}</a>"));
+    push(parts, "  </header>");
+    push(parts, "  <main>");
+    push(parts, "{{content}}");
+    push(parts, "  </main>");
+    push(parts, "  <footer>");
+    push(parts, str_concat("    <p>{{site_title}} &middot; woven with <a href=", q, "https://github.com/torvik-lang/vefna", q, ">Vefna</a></p>"));
+    push(parts, "  </footer>");
+    push(parts, "</body>");
+    push(parts, "</html>");
+    push(parts, "");
+    return join(parts, "\n");
+}
+
+df scaffold_index(name: str) -> str {
+    set parts: list<str> = list_new();
+    push(parts, "---");
+    push(parts, str_concat("title: Welcome to ", name));
+    push(parts, "---");
+    push(parts, "");
+    push(parts, str_concat("# Welcome to ", name));
+    push(parts, "");
+    push(parts, "This site is woven by **Vefna**, a static site generator written in the");
+    push(parts, "[Torvik](https://github.com/torvik-lang/torvik) programming language.");
+    push(parts, "");
+    push(parts, "## How it works");
+    push(parts, "");
+    push(parts, "1. Write pages as Markdown in `content/`");
+    push(parts, "2. Shape them with the templates in `templates/`");
+    push(parts, "3. Run `vefna build` - your site appears in `site/`");
+    push(parts, "");
+    push(parts, "Some things Markdown can do here:");
+    push(parts, "");
+    push(parts, "- **Bold**, *italic*, and `inline code`");
+    push(parts, "- [Links](https://example.com) and images");
+    push(parts, "- Blockquotes and fenced code blocks");
+    push(parts, "");
+    push(parts, "> The Norns sit at the well beneath the world-tree, weaving the threads of fate.");
+    push(parts, "> Vefna weaves only web pages, which is safer.");
+    push(parts, "");
+    push(parts, "```torvik");
+    push(parts, "df main() -> void {");
+    fixed q: str = '"';
+    push(parts, str_concat("    echo!(", q, "woven with Vefna", q, ");"));
+    push(parts, "}");
+    push(parts, "```");
+    push(parts, "");
+    push(parts, "---");
+    push(parts, "");
+    push(parts, "See the [about page](about.html) for more.");
+    push(parts, "");
+    return join(parts, "\n");
+}
+
+df scaffold_about() -> str {
+    set parts: list<str> = list_new();
+    push(parts, "---");
+    push(parts, "title: About");
+    push(parts, "---");
+    push(parts, "");
+    push(parts, "# About this site");
+    push(parts, "");
+    push(parts, "Pages live in `content/` and can sit in nested folders - the folder");
+    push(parts, "structure carries straight through to the generated site.");
+    push(parts, "");
+    push(parts, "Front matter at the top of a page can set `title`, `description`,");
+    push(parts, "`author`, `date`, and `template`.");
+    push(parts, "");
+    return join(parts, "\n");
+}
+
+df scaffold_css() -> str {
+    set parts: list<str> = list_new();
+    push(parts, ":root { --ink: #1c1e21; --paper: #fbf9f4; --accent: #7a2e2e; --muted: #6b6f76; }");
+    push(parts, "* { box-sizing: border-box; }");
+    push(parts, "body { margin: 0 auto; max-width: 42rem; padding: 1.5rem 1.25rem 4rem;");
+    push(parts, "  font: 17px/1.65 Georgia, 'Times New Roman', serif;");
+    push(parts, "  color: var(--ink); background: var(--paper); }");
+    push(parts, "header { border-bottom: 3px double var(--ink); margin-bottom: 2rem; padding-bottom: 0.75rem; }");
+    push(parts, ".site-title { font-size: 1.35rem; font-weight: bold; text-decoration: none;");
+    push(parts, "  color: var(--ink); letter-spacing: 0.02em; }");
+    push(parts, "h1, h2, h3, h4, h5, h6 { line-height: 1.25; }");
+    push(parts, "a { color: var(--accent); }");
+    push(parts, "code { font-family: 'Courier New', monospace; font-size: 0.92em;");
+    push(parts, "  background: #efe9dd; padding: 0.1em 0.3em; border-radius: 3px; }");
+    push(parts, "pre { background: #14161a; color: #e8e4da; padding: 1rem; overflow-x: auto;");
+    push(parts, "  border-radius: 6px; }");
+    push(parts, "pre code { background: none; color: inherit; padding: 0; }");
+    push(parts, "blockquote { border-left: 4px solid var(--accent); margin: 1.25rem 0;");
+    push(parts, "  padding: 0.25rem 1.25rem; color: var(--muted); font-style: italic; }");
+    push(parts, "img { max-width: 100%; }");
+    push(parts, "hr { border: none; border-top: 3px double var(--ink); margin: 2.5rem auto; width: 40%; }");
+    push(parts, "footer { margin-top: 3rem; border-top: 1px solid var(--muted);");
+    push(parts, "  padding-top: 0.75rem; font-size: 0.85rem; color: var(--muted); }");
+    push(parts, "");
+    return join(parts, "\n");
+}
+
+// Create a new site folder. Returns "" on success or an error message.
+df scaffold_site(name: str) -> str {
+    check name == "" { return "site name cannot be empty"; }
+    check contains(name, "/") { return "site name cannot contain '/'"; }
+    check contains(name, "\\") { return "site name cannot contain '\\'"; }
+    check fs_exists(name) { return str_concat("'", name, "' already exists"); }
+
+    fs_mkdir(name);
+    fixed content_dir: str = path_join(name, "content");
+    fixed tpl_dir: str = path_join(name, "templates");
+    fixed static_dir: str = path_join(name, "static");
+    fs_mkdir(content_dir);
+    fs_mkdir(tpl_dir);
+    fs_mkdir(static_dir);
+
+    fixed cfg_path: str = path_join(name, "vefna.site");
+    fixed cfg: str = scaffold_config(name);
+    set w1: result<i64> = try_writefile(cfg_path, cfg);
+    check is_err(w1) { return err_msg(w1); }
+
+    fixed tpl_path: str = path_join(tpl_dir, "page.html");
+    fixed tpl: str = scaffold_template();
+    set w2: result<i64> = try_writefile(tpl_path, tpl);
+    check is_err(w2) { return err_msg(w2); }
+
+    fixed idx_path: str = path_join(content_dir, "index.md");
+    fixed idx: str = scaffold_index(name);
+    set w3: result<i64> = try_writefile(idx_path, idx);
+    check is_err(w3) { return err_msg(w3); }
+
+    fixed about_path: str = path_join(content_dir, "about.md");
+    fixed about: str = scaffold_about();
+    set w4: result<i64> = try_writefile(about_path, about);
+    check is_err(w4) { return err_msg(w4); }
+
+    fixed css_path: str = path_join(static_dir, "style.css");
+    fixed css: str = scaffold_css();
+    set w5: result<i64> = try_writefile(css_path, css);
+    check is_err(w5) { return err_msg(w5); }
+
+    return "";
+}

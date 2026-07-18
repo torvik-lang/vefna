@@ -1,0 +1,91 @@
+// render.tv - one page through the pipeline, and the raven worker that runs it.
+// Everything here is self-contained (no globals) so it can be spawned with `raven`.
+
+// content/<rel>.md -> site/<rel>.html
+df out_path_for(src_path: str) -> str {
+    fixed cl: i64 = len("content");
+    fixed sl: i64 = len(src_path);
+    fixed rel: str = substr(src_path, cl + 1, sl);
+    fixed rl: i64 = len(rel);
+    fixed stem: str = substr(rel, 0, rl - 3);
+    fixed rel_html: str = str_concat(stem, ".html");
+    return path_join("site", rel_html);
+}
+
+// Render one source page to its output file. Returns "ok:<out>" or "err:<what>".
+df render_one(src_path: str, site_title: str, site_desc: str, site_author: str, site_url: str) -> str {
+    set r: result<str> = try_readfile(src_path);
+    check is_err(r) {
+        fixed m: str = err_msg(r);
+        return str_concat("err:", src_path, ": ", m);
+    }
+    fixed raw: str = unwrap(r);
+    fixed src: str = replace(raw, "\r", "");
+
+    set meta: table<str, str> = fm_meta(src);
+    fixed body: str = fm_body(src);
+    fixed html_body: str = md_render(body);
+
+    // Template selection: front matter `template: name` -> templates/name.html.
+    set tname: str = "page";
+    check table_has(meta, "template") {
+        tname = table_get(meta, "template");
+    }
+    fixed tfile: str = str_concat(tname, ".html");
+    fixed tpath: str = path_join("templates", tfile);
+    set tr: result<str> = try_readfile(tpath);
+    check is_err(tr) {
+        fixed tm: str = err_msg(tr);
+        return str_concat("err:", src_path, ": template ", tpath, ": ", tm);
+    }
+    fixed tpl_raw: str = unwrap(tr);
+    fixed tpl: str = replace(tpl_raw, "\r", "");
+
+    // Page values, with site-level defaults.
+    set title: str = site_title;
+    check table_has(meta, "title") {
+        title = table_get(meta, "title");
+    }
+    set author: str = site_author;
+    check table_has(meta, "author") {
+        author = table_get(meta, "author");
+    }
+    set date: str = "";
+    check table_has(meta, "date") {
+        date = table_get(meta, "date");
+    }
+    set desc: str = site_desc;
+    check table_has(meta, "description") {
+        desc = table_get(meta, "description");
+    }
+
+    set page: str = tpl;
+    page = tmpl_fill(page, "content", html_body);
+    page = tmpl_fill(page, "title", title);
+    page = tmpl_fill(page, "description", desc);
+    page = tmpl_fill(page, "author", author);
+    page = tmpl_fill(page, "date", date);
+    page = tmpl_fill(page, "site_title", site_title);
+    page = tmpl_fill(page, "site_description", site_desc);
+    page = tmpl_fill(page, "site_url", site_url);
+
+    fixed outp: str = out_path_for(src_path);
+    set w: result<i64> = try_writefile(outp, page);
+    check is_err(w) {
+        fixed wm: str = err_msg(w);
+        return str_concat("err:", outp, ": ", wm);
+    }
+    return str_concat("ok:", outp);
+}
+
+// A rendering worker: drain page paths from `jobs`, report status on `results`.
+// Spawned with `raven`; exits when `jobs` is closed and drained.
+df vefna_worker(jobs: bridge<str>, results: bridge<str>, site_title: str, site_desc: str, site_author: str, site_url: str) -> void {
+    whilst true {
+        set jr: result<str> = try_recv(jobs);
+        check is_err(jr) { break; }
+        fixed p: str = unwrap(jr);
+        fixed status: str = render_one(p, site_title, site_desc, site_author, site_url);
+        send(results, status);
+    }
+}

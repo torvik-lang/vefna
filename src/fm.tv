@@ -1,0 +1,102 @@
+// fm.tv - front matter and site config.
+// Front matter sits between two `---` fences at the top of a page:
+//   ---
+//   title: My Post
+//   date: 2026-07-17
+//   ---
+// vefna.site uses the same `key: value` lines (no fences).
+
+// Whether a (CR-stripped) source starts with a front-matter fence.
+df fm_has(src: str) -> bool {
+    check starts(src, "---\n") { return true; }
+    check trim(src) == "---" { return true; }
+    return false;
+}
+
+// Parse `key: value` lines from a list of lines, honoring [from, to).
+df fm_parse_lines(lines: list<str>, from: i64, to: i64) -> table<str, str> {
+    set meta: table<str, str> = table_new();
+    set i: i64 = from;
+    whilst i < to {
+        fixed ln: str = lines[i];
+        fixed lt: str = trim(ln);
+        check lt == "" {
+            i += 1;
+            continue;
+        }
+        check starts(lt, "#") {
+            i += 1;
+            continue;
+        }
+        fixed p: i64 = find(lt, ":");
+        check p > 0 {
+            fixed k: str = trim(substr(lt, 0, p));
+            fixed v: str = trim(substr(lt, p + 1, len(lt)));
+            table_set(meta, k, v);
+        }
+        i += 1;
+    }
+    return meta;
+}
+
+// Index of the closing `---` line (searching from line 1), or -1.
+df fm_close_index(lines: list<str>) -> i64 {
+    fixed n: i64 = len(lines);
+    set i: i64 = 1;
+    whilst i < n {
+        fixed lt: str = trim(lines[i]);
+        check lt == "---" { return i; }
+        i += 1;
+    }
+    return -1;
+}
+
+// The page's front-matter table (empty when there is none).
+df fm_meta(src: str) -> table<str, str> {
+    check fm_has(src) == false {
+        set empty: table<str, str> = table_new();
+        return empty;
+    }
+    fixed lines: list<str> = split(src, "\n");
+    fixed close: i64 = fm_close_index(lines);
+    check close == -1 {
+        set empty2: table<str, str> = table_new();
+        return empty2;
+    }
+    return fm_parse_lines(lines, 1, close);
+}
+
+// The page body with any front matter removed.
+df fm_body(src: str) -> str {
+    check fm_has(src) == false { return src; }
+    fixed lines: list<str> = split(src, "\n");
+    fixed close: i64 = fm_close_index(lines);
+    check close == -1 { return src; }
+    set rest: list<str> = list_new();
+    push(rest, "");
+    md_clear(rest);
+    fixed n: i64 = len(lines);
+    set i: i64 = close + 1;
+    whilst i < n {
+        push(rest, lines[i]);
+        i += 1;
+    }
+    return join(rest, "\n");
+}
+
+// Parse vefna.site (plain `key: value` lines, `#` comments allowed).
+df cfg_parse(src: str) -> table<str, str> {
+    fixed clean: str = replace(src, "\r", "");
+    fixed lines: list<str> = split(clean, "\n");
+    fixed n: i64 = len(lines);
+    return fm_parse_lines(lines, 0, n);
+}
+
+// A config value with a default when the key is absent or empty.
+df cfg_get(cfg: table<str, str>, key: str, default_val: str) -> str {
+    check table_has(cfg, key) {
+        fixed v: str = table_get(cfg, key);
+        check v != "" { return v; }
+    }
+    return default_val;
+}

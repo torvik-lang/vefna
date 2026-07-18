@@ -1,0 +1,391 @@
+// md.tv - Vefna's Markdown renderer.
+// A pragmatic Markdown subset: headings, paragraphs, bold, italic, inline code,
+// links, images, unordered/ordered lists, fenced code blocks, blockquotes,
+// and horizontal rules. Line-based block pass + byte-scanning inline pass.
+
+// Escape the HTML-significant characters in a string.
+df md_esc(s: str) -> str {
+    set out: str = replace(s, "&", "&amp;");
+    out = replace(out, "<", "&lt;");
+    out = replace(out, ">", "&gt;");
+    return out;
+}
+
+// find() from a starting offset: byte index of needle at/after `from`, or -1.
+df md_find_from(s: str, needle: str, from: i64) -> i64 {
+    fixed n: i64 = len(s);
+    check from >= n { return -1; }
+    fixed tail: str = substr(s, from, n);
+    fixed p: i64 = find(tail, needle);
+    check p == -1 { return -1; }
+    return p + from;
+}
+
+// Emit one source byte into parts, HTML-escaped.
+df md_emit_byte(parts: list<str>, s: str, i: i64) -> void {
+    fixed c: i64 = byte_at(s, i);
+    when c {
+        38 => push(parts, "&amp;");
+        60 => push(parts, "&lt;");
+        62 => push(parts, "&gt;");
+        fallback => {
+            fixed j: i64 = i + 1;
+            push(parts, substr(s, i, j));
+        }
+    }
+}
+
+// Inline pass: `code`, **bold**, *italic*, [text](url), ![alt](url).
+// Input is raw text; escaping happens as bytes are emitted.
+df md_inline(s: str) -> str {
+    set parts: list<str> = list_new();
+    push(parts, "");
+    fixed n: i64 = len(s);
+    set i: i64 = 0;
+    set in_code: bool = false;
+    set in_b: bool = false;
+    set in_i: bool = false;
+
+    whilst i < n {
+        fixed c: i64 = byte_at(s, i);
+
+        // Inside a code span: only a backtick is special.
+        check in_code {
+            check c == 96 {
+                push(parts, "</code>");
+                in_code = false;
+                i += 1;
+                continue;
+            }
+            md_emit_byte(parts, s, i);
+            i += 1;
+            continue;
+        }
+
+        // Backtick opens a code span.
+        check c == 96 {
+            push(parts, "<code>");
+            in_code = true;
+            i += 1;
+            continue;
+        }
+
+        // '*' - bold (**) or italic (*).
+        check c == 42 {
+            set c2: i64 = -1;
+            fixed i1: i64 = i + 1;
+            check i1 < n { c2 = byte_at(s, i1); }
+            check c2 == 42 {
+                in_b = in_b ?> false !> true;
+                fixed btag: str = in_b ?> "<strong>" !> "</strong>";
+                push(parts, btag);
+                i += 2;
+                continue;
+            }
+            in_i = in_i ?> false !> true;
+            fixed itag: str = in_i ?> "<em>" !> "</em>";
+            push(parts, itag);
+            i += 1;
+            continue;
+        }
+
+        // '!' followed by '[' - an image.
+        check c == 33 {
+            set c2b: i64 = -1;
+            fixed ib: i64 = i + 1;
+            check ib < n { c2b = byte_at(s, ib); }
+            check c2b == 91 {
+                fixed mid: i64 = md_find_from(s, "](", ib);
+                check mid != -1 {
+                    fixed m2: i64 = mid + 2;
+                    fixed endp: i64 = md_find_from(s, ")", m2);
+                    check endp != -1 {
+                        fixed alt_raw: str = substr(s, ib + 1, mid);
+                        fixed url_raw: str = substr(s, m2, endp);
+                        fixed alt: str = md_esc(alt_raw);
+                        fixed url: str = md_esc(url_raw);
+                        fixed q: str = '"';
+                        push(parts, str_concat("<img src=", q, url, q, " alt=", q, alt, q, ">"));
+                        i = endp + 1;
+                        continue;
+                    }
+                }
+            }
+            md_emit_byte(parts, s, i);
+            i += 1;
+            continue;
+        }
+
+        // '[' - a link.
+        check c == 91 {
+            fixed mid2: i64 = md_find_from(s, "](", i);
+            check mid2 != -1 {
+                fixed m22: i64 = mid2 + 2;
+                fixed endp2: i64 = md_find_from(s, ")", m22);
+                check endp2 != -1 {
+                    fixed txt_raw: str = substr(s, i + 1, mid2);
+                    fixed href_raw: str = substr(s, m22, endp2);
+                    fixed txt: str = md_esc(txt_raw);
+                    fixed href: str = md_esc(href_raw);
+                    fixed q2: str = '"';
+                    push(parts, str_concat("<a href=", q2, href, q2, ">", txt, "</a>"));
+                    i = endp2 + 1;
+                    continue;
+                }
+            }
+            md_emit_byte(parts, s, i);
+            i += 1;
+            continue;
+        }
+
+        md_emit_byte(parts, s, i);
+        i += 1;
+    }
+
+    // Close anything left open so output stays valid HTML.
+    check in_code { push(parts, "</code>"); }
+    check in_b { push(parts, "</strong>"); }
+    check in_i { push(parts, "</em>"); }
+
+    return join(parts, "");
+}
+
+// Heading level of a line: number of leading '#' (1-6) followed by a space; 0 if not a heading.
+df md_heading_level(line: str) -> i64 {
+    fixed n: i64 = len(line);
+    set h: i64 = 0;
+    whilst h < n {
+        fixed c: i64 = byte_at(line, h);
+        check c != 35 { break; }
+        h += 1;
+    }
+    check h < 1 { return 0; }
+    check h > 6 { return 0; }
+    check h >= n { return 0; }
+    fixed after: i64 = byte_at(line, h);
+    check after != 32 { return 0; }
+    return h;
+}
+
+// Offset where an ordered-list item's text starts ("12. text" -> 4), or -1.
+df md_ol_offset(line: str) -> i64 {
+    fixed n: i64 = len(line);
+    set d: i64 = 0;
+    whilst d < n {
+        fixed c: i64 = byte_at(line, d);
+        check c < 48 { break; }
+        check c > 57 { break; }
+        d += 1;
+    }
+    check d < 1 { return -1; }
+    fixed d1: i64 = d + 1;
+    check d1 >= n { return -1; }
+    fixed dot: i64 = byte_at(line, d);
+    check dot != 46 { return -1; }
+    fixed sp: i64 = byte_at(line, d1);
+    check sp != 32 { return -1; }
+    return d + 2;
+}
+
+// Whether a trimmed line is a horizontal rule: 3+ of only '-' or only '*'.
+df md_is_hr(t: str) -> bool {
+    fixed n: i64 = len(t);
+    check n < 3 { return false; }
+    fixed first: i64 = byte_at(t, 0);
+    check first != 45 && first != 42 { return false; }
+    set i: i64 = 0;
+    whilst i < n {
+        fixed c: i64 = byte_at(t, i);
+        check c != first { return false; }
+        i += 1;
+    }
+    return true;
+}
+
+// Drain a list<str> in place.
+df md_clear(xs: list<str>) -> void {
+    whilst len(xs) > 0 {
+        fixed _d: str = list_pop(xs);
+    }
+}
+
+// Flush an accumulated paragraph buffer into parts.
+df md_flush_para(parts: list<str>, buf: list<str>) -> void {
+    check len(buf) > 0 {
+        fixed inner: str = join(buf, "\n");
+        fixed rendered: str = md_inline(inner);
+        push(parts, str_concat("<p>", rendered, "</p>"));
+        md_clear(buf);
+    }
+}
+
+// Flush accumulated list items into parts as <ul> or <ol>.
+df md_flush_items(parts: list<str>, items: list<str>, ordered: bool) -> void {
+    check len(items) > 0 {
+        fixed open_tag: str = ordered ?> "<ol>" !> "<ul>";
+        fixed close_tag: str = ordered ?> "</ol>" !> "</ul>";
+        push(parts, open_tag);
+        each it in items {
+            fixed rendered: str = md_inline(it);
+            push(parts, str_concat("<li>", rendered, "</li>"));
+        }
+        push(parts, close_tag);
+        md_clear(items);
+    }
+}
+
+// Flush accumulated blockquote lines into parts.
+df md_flush_quote(parts: list<str>, qbuf: list<str>) -> void {
+    check len(qbuf) > 0 {
+        fixed inner: str = join(qbuf, "\n");
+        fixed rendered: str = md_inline(inner);
+        push(parts, str_concat("<blockquote><p>", rendered, "</p></blockquote>"));
+        md_clear(qbuf);
+    }
+}
+
+// The block-level renderer: Markdown body text in, HTML fragment out.
+df md_render(body: str) -> str {
+    set parts: list<str> = list_new();
+    push(parts, "");
+    set pbuf: list<str> = list_new();
+    push(pbuf, "");
+    md_clear(pbuf);
+    set items: list<str> = list_new();
+    push(items, "");
+    md_clear(items);
+    set qbuf: list<str> = list_new();
+    push(qbuf, "");
+    md_clear(qbuf);
+
+    set cbuf: list<str> = list_new();
+    push(cbuf, "");
+    md_clear(cbuf);
+    set code_open: str = "";
+
+    set in_code: bool = false;
+    set ordered: bool = false;
+
+    fixed lines: list<str> = split(body, "\n");
+    each line in lines {
+        // Fenced code block interior.
+        check in_code {
+            fixed t0: str = trim(line);
+            check starts(t0, "```") {
+                fixed code: str = join(cbuf, "\n");
+                push(parts, str_concat(code_open, code, "</code></pre>"));
+                md_clear(cbuf);
+                in_code = false;
+                continue;
+            }
+            fixed esc: str = md_esc(line);
+            push(cbuf, esc);
+            continue;
+        }
+
+        fixed t: str = trim(line);
+
+        // Opening fence.
+        check starts(t, "```") {
+            md_flush_para(parts, pbuf);
+            md_flush_items(parts, items, ordered);
+            md_flush_quote(parts, qbuf);
+            fixed lang: str = trim(substr(t, 3, len(t)));
+            check lang == "" {
+                code_open = "<pre><code>";
+            } fallback {
+                fixed q: str = '"';
+                fixed lang_esc: str = md_esc(lang);
+                code_open = str_concat("<pre><code class=", q, "language-", lang_esc, q, ">");
+            }
+            in_code = true;
+            continue;
+        }
+
+        // Blank line ends every open block.
+        check t == "" {
+            md_flush_para(parts, pbuf);
+            md_flush_items(parts, items, ordered);
+            md_flush_quote(parts, qbuf);
+            continue;
+        }
+
+        // Horizontal rule.
+        check md_is_hr(t) {
+            md_flush_para(parts, pbuf);
+            md_flush_items(parts, items, ordered);
+            md_flush_quote(parts, qbuf);
+            push(parts, "<hr>");
+            continue;
+        }
+
+        // Heading.
+        fixed hl: i64 = md_heading_level(t);
+        check hl > 0 {
+            md_flush_para(parts, pbuf);
+            md_flush_items(parts, items, ordered);
+            md_flush_quote(parts, qbuf);
+            fixed htext: str = trim(substr(t, hl + 1, len(t)));
+            fixed hin: str = md_inline(htext);
+            fixed hs: str = int_to_str(hl);
+            push(parts, str_concat("<h", hs, ">", hin, "</h", hs, ">"));
+            continue;
+        }
+
+        // Blockquote.
+        check starts(t, "> ") || t == ">" {
+            md_flush_para(parts, pbuf);
+            md_flush_items(parts, items, ordered);
+            set qtext: str = trim(substr(t, 1, len(t)));
+            push(qbuf, qtext);
+            continue;
+        }
+
+        // Unordered list item.
+        check starts(t, "- ") || starts(t, "* ") {
+            md_flush_para(parts, pbuf);
+            md_flush_quote(parts, qbuf);
+            check len(items) > 0 && ordered {
+                md_flush_items(parts, items, ordered);
+            }
+            ordered = false;
+            fixed utext: str = trim(substr(t, 2, len(t)));
+            push(items, utext);
+            continue;
+        }
+
+        // Ordered list item.
+        fixed oloff: i64 = md_ol_offset(t);
+        check oloff != -1 {
+            md_flush_para(parts, pbuf);
+            md_flush_quote(parts, qbuf);
+            check len(items) > 0 && ordered == false {
+                md_flush_items(parts, items, ordered);
+            }
+            ordered = true;
+            fixed otext: str = trim(substr(t, oloff, len(t)));
+            push(items, otext);
+            continue;
+        }
+
+        // Anything else joins the current paragraph (or continues a quote).
+        check len(qbuf) > 0 {
+            push(qbuf, t);
+            continue;
+        }
+        md_flush_items(parts, items, ordered);
+        push(pbuf, t);
+    }
+
+    // End of input: close whatever is open.
+    check in_code {
+        fixed code_tail: str = join(cbuf, "\n");
+        push(parts, str_concat(code_open, code_tail, "</code></pre>"));
+        md_clear(cbuf);
+    }
+    md_flush_para(parts, pbuf);
+    md_flush_items(parts, items, ordered);
+    md_flush_quote(parts, qbuf);
+
+    return join(parts, "\n");
+}

@@ -1,0 +1,35 @@
+// walk.tv - recursive directory walking (dir_list + fs_is_dir, both v1.3.0).
+
+// Collect every .md file under dir into out_list (paths include dir as prefix).
+df walk_md(dir: str, out_list: list<str>) -> void {
+    fixed entries: list<str> = dir_list(dir);
+    each e in entries {
+        fixed p: str = path_join(dir, e);
+        check fs_is_dir(p) {
+            walk_md(p, out_list);
+        } fallback {
+            check ends(e, ".md") {
+                push(out_list, p);
+            }
+        }
+    }
+}
+
+// Collect every file (any type) under dir into out_list.
+df walk_all(dir: str, out_list: list<str>) -> void {
+    fixed entries: list<str> = dir_list(dir);
+    each e in entries {
+        fixed p: str = path_join(dir, e);
+        check fs_is_dir(p) {
+            walk_all(p, out_list);
+        } fallback {
+            push(out_list, p);
+        }
+    }
+}
+
+// Fill one {{name}} slot in a template with a value.
+df tmpl_fill(tpl: str, name: str, val: str) -> str {
+    fixed slot: str = str_concat("{{", name, "}}");
+    return replace(tpl, slot, val);
+}
