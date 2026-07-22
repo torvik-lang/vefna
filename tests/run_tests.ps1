@@ -104,6 +104,24 @@ Pop-Location
 T "missing template fails the build" ($code -ne 0)
 T "missing template reports the page" (($out -join "`n") -match "error:")
 
+# --- drafts (v1.1.0) ---
+& $Vefna new drafttest | Out-Null
+@('---','title: Draft','draft: true','---','# Draft body') | Set-Content "drafttest\content\secret.md"
+Push-Location drafttest
+& $Vefna build --clean | Out-Null
+T "site with a draft builds" ($LASTEXITCODE -eq 0)
+Pop-Location
+T "draft is excluded by default" (-not (Test-Path "drafttest\site\secret.html"))
+Push-Location drafttest
+& $Vefna build --clean --drafts | Out-Null
+T "build --drafts rebuilds" ($LASTEXITCODE -eq 0)
+Pop-Location
+T "draft is included with --drafts" (Test-Path "drafttest\site\secret.html")
+Push-Location drafttest
+$out = & $Vefna build --clean
+T "default build reports skipped drafts" (($out -join "`n") -match "draft\(s\) skipped")
+Pop-Location
+
 Write-Host ""
 Write-Host "$($script:Pass) passed, $($script:Fail) failed"
 if ($script:Fail -ne 0) { exit 1 }

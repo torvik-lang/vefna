@@ -57,6 +57,16 @@ printf -- '---\ntitle: Broken\ntemplate: nope\n---\n\n# x\n' > fxerr/content/bro
 ( cd fxerr && "$VEFNA" build --clean >/dev/null 2>&1 ) && t "missing template fails the build" 1 || t "missing template fails the build" 0
 ( cd fxerr && "$VEFNA" build --clean 2>/dev/null | grep -q "error:" ); t "missing template reports the page" $?
 
+# --- drafts (v1.1.0) ---
+"$VEFNA" new drafttest >/dev/null 2>&1
+printf '%s\n' '---' 'title: Draft' 'draft: true' '---' '# Draft body' > drafttest/content/secret.md
+( cd drafttest && "$VEFNA" build --clean >/dev/null 2>&1 ); t "site with a draft builds" $?
+[ ! -f drafttest/site/secret.html ]; t "draft is excluded by default" $?
+( cd drafttest && "$VEFNA" build --clean --drafts >/dev/null 2>&1 ); t "build --drafts rebuilds" $?
+[ -f drafttest/site/secret.html ]; t "draft is included with --drafts" $?
+( cd drafttest && "$VEFNA" build --clean 2>/dev/null | grep -q "draft(s) skipped" ); t "default build reports skipped drafts" $?
+
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
