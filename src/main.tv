@@ -8,18 +8,25 @@ apply render;
 apply scaffold;
 
 df vefna_version() -> str {
-    return "1.0.0";
+    return "1.1.0";
 }
 
 df print_help() -> void {
     echo!("Vefna - a static site generator woven in Torvik");
     echo!("");
     echo!("Usage:");
-    echo!("  vefna new <name>    Create a new site in a new directory");
-    echo!("  vefna build         Build the site (incremental) into site/");
-    echo!("  vefna build --clean Rebuild everything from scratch");
-    echo!("  vefna version       Show version information");
-    echo!("  vefna help          Show this help");
+    echo!("  vefna new <name>       Create a new site in a new directory");
+    echo!("  vefna build            Build the site (incremental) into site/");
+    echo!("  vefna serve [port]     Build, then serve site/ at http://127.0.0.1:PORT");
+    echo!("                         and rebuild on change (default port 8000)");
+    echo!("  vefna watch            Rebuild automatically when sources change");
+    echo!("  vefna version          Show version information");
+    echo!("  vefna help             Show this help");
+    echo!("");
+    echo!("Options:");
+    echo!("  --clean                (build) Delete site/ and rebuild everything");
+    echo!("  --watch                (build) Keep running; rebuild on change");
+    echo!("  --drafts               Include pages marked  draft: true");
 }
 
 df cmd_version() -> void {
@@ -38,6 +45,64 @@ df cmd_new(name: str) -> void {
     echo!("  vefna build");
 }
 
+// ── Flag / argument helpers ─────────────────────────────────────────────────
+
+// Is `flag` present anywhere in the arguments (after the command word)?
+df has_flag(flag: str) -> bool {
+    fixed argc: i64 = args();
+    set i: i64 = 2;
+    whilst i < argc {
+        fixed a: str = args_get(i);
+        check a == flag { return true; }
+        i += 1;
+    }
+    return false;
+}
+
+// Exact membership test against a space-separated allow-list (so "--draft" does
+// not match "--drafts").
+df flag_known(allowed: str, flag: str) -> bool {
+    fixed padded: str = str_concat(" ", str_concat(allowed, " "));
+    fixed needle: str = str_concat(" ", str_concat(flag, " "));
+    return contains(padded, needle);
+}
+
+// The first --flag among the arguments that is not in `allowed`, or "" if all OK.
+df unknown_flag(allowed: str) -> str {
+    fixed argc: i64 = args();
+    set i: i64 = 2;
+    whilst i < argc {
+        fixed a: str = args_get(i);
+        check starts(a, "--") {
+            check flag_known(allowed, a) == false { return a; }
+        }
+        i += 1;
+    }
+    return "";
+}
+
+// The first bare (non-flag) argument parsed as a port, or 8000 if none/invalid.
+df serve_port_arg() -> i64 {
+    fixed argc: i64 = args();
+    set i: i64 = 2;
+    whilst i < argc {
+        fixed a: str = args_get(i);
+        fixed is_flag: bool = starts(a, "--");
+        check is_flag == false {
+            set pr: result<i64> = try_toint(a);
+            fixed pr_bad: bool = is_err(pr);
+            check pr_bad == false {
+                fixed p: i64 = unwrap(pr);
+                check p > 0 { return p; }
+            }
+        }
+        i += 1;
+    }
+    return 8000;
+}
+
+// ── Build dependencies / change detection ───────────────────────────────────
+
 // Newest mtime among the config file and everything under templates/.
 df deps_mtime() -> i64 {
     set newest: i64 = fs_mtime("vefna.site");
@@ -52,6 +117,46 @@ df deps_mtime() -> i64 {
         }
     }
     return newest;
+}
+
+// Newest mtime across everything a build depends on: config, templates, content,
+// and static assets. serve/watch rebuild when this climbs past the last build.
+df sources_newest() -> i64 {
+    set newest: i64 = deps_mtime();
+    check fs_exists("content") {
+        set cf: list<str> = list_new();
+        push(cf, "");
+        md_clear(cf);
+        walk_all("content", cf);
+        each cfp in cf {
+            fixed m: i64 = fs_mtime(cfp);
+            check m > newest { newest = m; }
+        }
+    }
+    check fs_exists("static") {
+        set sf: list<str> = list_new();
+        push(sf, "");
+        md_clear(sf);
+        walk_all("static", sf);
+        each sfp in sf {
+            fixed m: i64 = fs_mtime(sfp);
+            check m > newest { newest = m; }
+        }
+    }
+    return newest;
+}
+
+// True if a source page is marked `draft: true` (also accepts yes / 1) in its
+// front matter. Mirrors render_one's CRLF handling so parsing matches the build.
+df is_draft(src_path: str) -> bool {
+    set r: result<str> = try_readfile(src_path);
+    check is_err(r) { return false; }
+    fixed raw: str = unwrap(r);
+    fixed src: str = replace(raw, "\r", "");
+    fixed meta: table<str, str> = fm_meta(src);
+    fixed d: str = lower(trim(cfg_get(meta, "draft", "")));
+    check d == "true" || d == "yes" || d == "1" { return true; }
+    return false;
 }
 
 // Copy static/<rel> to site/static/<rel> when needed. Returns 1 if copied.
@@ -90,22 +195,25 @@ df sync_static_file(src: str, clean: bool) -> i64 {
     return 0;
 }
 
-df cmd_build(clean: bool) -> void {
-    guard fs_exists("vefna.site") fallback {
+// ── The build core ──────────────────────────────────────────────────────────
+
+// Build the site once. Returns -1 on a fatal setup error (no vefna.site / no
+// content), otherwise the number of page errors (0 = success). `drafts` includes
+// draft pages; `quiet` suppresses per-page and up-to-date chatter (for the
+// serve/watch loops) but still reports a one-line rebuild summary and any errors.
+df run_build(clean: bool, drafts: bool, quiet: bool) -> i64 {
+    check fs_exists("vefna.site") == false {
         echo!("error: no vefna.site here - this is not a Vefna site.");
         echo!("Run 'vefna new <name>' to weave one.");
-        exit(1);
-        return;
+        return -1;
     }
     fixed t_start: i64 = time_ms();
 
-    // Site configuration.
     set cr: result<str> = try_readfile("vefna.site");
     check is_err(cr) {
         fixed cm: str = err_msg(cr);
         echo!("error: vefna.site: {cm}");
-        exit(1);
-        return;
+        return -1;
     }
     fixed cfg_src: str = unwrap(cr);
     set cfg: table<str, str> = cfg_parse(cfg_src);
@@ -114,10 +222,9 @@ df cmd_build(clean: bool) -> void {
     fixed site_author: str = cfg_get(cfg, "author", "");
     fixed site_url: str = cfg_get(cfg, "url", "");
 
-    guard fs_exists("content") fallback {
+    check fs_exists("content") == false {
         echo!("error: no content/ directory - nothing to weave.");
-        exit(1);
-        return;
+        return -1;
     }
 
     check clean {
@@ -127,11 +234,22 @@ df cmd_build(clean: bool) -> void {
     }
     fs_mkdir("site");
 
-    // Collect pages.
+    // Collect pages, dropping drafts unless --drafts was passed.
+    set all_pages: list<str> = list_new();
+    push(all_pages, "");
+    md_clear(all_pages);
+    walk_md("content", all_pages);
     set pages: list<str> = list_new();
     push(pages, "");
     md_clear(pages);
-    walk_md("content", pages);
+    set ndrafts: i64 = 0;
+    each p in all_pages {
+        check drafts == false && is_draft(p) {
+            ndrafts += 1;
+        } fallback {
+            push(pages, p);
+        }
+    }
     fixed total_pages: i64 = len(pages);
 
     // Decide which pages need weaving (mtime vs output, template/config deps).
@@ -139,14 +257,14 @@ df cmd_build(clean: bool) -> void {
     set jobs_list: list<str> = list_new();
     push(jobs_list, "");
     md_clear(jobs_list);
-    each p in pages {
-        fixed outp: str = out_path_for(p);
+    each pg in pages {
+        fixed outp: str = out_path_for(pg);
         set need: bool = clean;
         check need == false {
             check fs_exists(outp) == false {
                 need = true;
             } fallback {
-                fixed pm: i64 = fs_mtime(p);
+                fixed pm: i64 = fs_mtime(pg);
                 fixed om: i64 = fs_mtime(outp);
                 check pm > om { need = true; }
                 check dm > om { need = true; }
@@ -155,7 +273,7 @@ df cmd_build(clean: bool) -> void {
         check need {
             fixed outd: str = path_dir(outp);
             fs_mkdir(outd);
-            push(jobs_list, p);
+            push(jobs_list, pg);
         }
     }
     fixed njobs: i64 = len(jobs_list);
@@ -173,62 +291,165 @@ df cmd_build(clean: bool) -> void {
         }
     }
 
-    check njobs == 0 {
-        echo!("Site is up to date ({total_pages} pages, {ncopied} assets copied).");
-        return;
-    }
-
-    // Weave in parallel: 8 ravens drain the jobs bridge, report on results.
-    fixed cap: i64 = njobs;
-    set jobs: bridge<str> = bridge_new(cap);
-    set results: bridge<str> = bridge_new(cap);
-
-    set h1: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h2: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h3: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h4: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h5: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h6: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h7: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-    set h8: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
-
-    each j in jobs_list {
-        send(jobs, j);
-    }
-    bridge_close(jobs);
-
-    set nerr: i64 = 0;
-    set got: i64 = 0;
-    whilst got < njobs {
-        fixed status: str = recv(results);
-        check starts(status, "ok:") {
-            fixed okp: str = substr(status, 3, len(status));
-            echo!("  wove {okp}");
-        } fallback {
-            fixed em: str = substr(status, 4, len(status));
-            echo!("  error: {em}");
-            nerr += 1;
+    fixed draft_note: str = ndrafts > 0 ?> fmt(" ({} draft(s) skipped)", ndrafts) !> "";
+    check njobs == 0 && ncopied == 0 {
+        check quiet == false {
+            echo!("Site is up to date ({total_pages} pages, {ncopied} assets copied).{draft_note}");
         }
-        got += 1;
+        return 0;
     }
 
-    join(h1);
-    join(h2);
-    join(h3);
-    join(h4);
-    join(h5);
-    join(h6);
-    join(h7);
-    join(h8);
+    // Weave in parallel: 8 ravens drain the jobs bridge; report on results.
+    set nerr: i64 = 0;
+    check njobs > 0 {
+        fixed cap: i64 = njobs;
+        set jobs: bridge<str> = bridge_new(cap);
+        set results: bridge<str> = bridge_new(cap);
+
+        set h1: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h2: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h3: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h4: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h5: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h6: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h7: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+        set h8: task<void> = raven vefna_worker(jobs, results, site_title, site_desc, site_author, site_url);
+
+        each j in jobs_list {
+            send(jobs, j);
+        }
+        bridge_close(jobs);
+
+        set got: i64 = 0;
+        whilst got < njobs {
+            fixed status: str = recv(results);
+            check starts(status, "ok:") {
+                fixed okp: str = substr(status, 3, len(status));
+                check quiet == false { echo!("  wove {okp}"); }
+            } fallback {
+                fixed em: str = substr(status, 4, len(status));
+                echo!("  error: {em}");
+                nerr += 1;
+            }
+            got += 1;
+        }
+
+        join(h1);
+        join(h2);
+        join(h3);
+        join(h4);
+        join(h5);
+        join(h6);
+        join(h7);
+        join(h8);
+    }
 
     fixed t_end: i64 = time_ms();
     fixed elapsed: i64 = t_end - t_start;
     check nerr > 0 {
         echo!("Done with {nerr} error(s): {njobs} pages woven, {ncopied} assets copied ({elapsed}ms).");
+        return nerr;
+    }
+    check quiet {
+        echo!("  rebuilt {njobs} page(s), {ncopied} asset(s) ({elapsed}ms).{draft_note}");
+    } fallback {
+        echo!("Wove {njobs} of {total_pages} pages, {ncopied} assets copied ({elapsed}ms).{draft_note}");
+    }
+    return 0;
+}
+
+df cmd_build(clean: bool, drafts: bool, watch: bool) -> void {
+    fixed r: i64 = run_build(clean, drafts, false);
+    check r < 0 { exit(1); return; }
+    check watch == false {
+        check r > 0 { exit(1); }
+        return;
+    }
+    // Watch: poll for source changes and rebuild until interrupted.
+    echo!("Watching for changes - Ctrl-C to stop.");
+    set watermark: i64 = sources_newest();
+    whilst true {
+        sleep(500);
+        fixed now: i64 = sources_newest();
+        check now > watermark {
+            set _r: i64 = run_build(false, drafts, true);
+            watermark = sources_newest();
+        }
+    }
+}
+
+// ── serve ───────────────────────────────────────────────────────────────────
+
+// Map a decoded request path to a file under site/. "/" and any directory (or a
+// trailing "/") resolve to that directory's index.html.
+df serve_resolve(rp: str) -> str {
+    set rel: str = rp;
+    check starts(rel, "/") { rel = substr(rel, 1, len(rel)); }
+    check rel == "" { return path_join("site", "index.html"); }
+    fixed base: str = path_join("site", rel);
+    check ends(rp, "/") { return path_join(base, "index.html"); }
+    check fs_exists(base) && fs_is_dir(base) { return path_join(base, "index.html"); }
+    return base;
+}
+
+// Handle one HTTP request against site/, logging a concise access line.
+df serve_request(client: i64, req: str) -> void {
+    fixed method: str = http_method(req);
+    fixed rp: str = http_path(req);
+    check method != "GET" && method != "HEAD" {
+        set _m: i64 = send_status(client, 405, "Method Not Allowed");
+        echo!("  {method} {rp} -> 405");
+        return;
+    }
+    check path_is_safe(rp) == false {
+        set _f: i64 = send_status(client, 403, "Forbidden");
+        echo!("  {method} {rp} -> 403");
+        return;
+    }
+    fixed fpath: str = serve_resolve(rp);
+    check fs_exists(fpath) && fs_is_dir(fpath) == false {
+        fixed n: i64 = send_file_response(client, fpath);
+        check n < 0 {
+            set _e: i64 = send_status(client, 500, "Internal Server Error");
+            echo!("  {method} {rp} -> 500");
+        } fallback {
+            echo!("  {method} {rp} -> 200");
+        }
+        return;
+    }
+    set _nf: i64 = send_status(client, 404, "Not Found");
+    echo!("  {method} {rp} -> 404");
+}
+
+df cmd_serve(port: i64, drafts: bool) -> void {
+    fixed r: i64 = run_build(false, drafts, false);
+    check r < 0 { exit(1); return; }
+    set watermark: i64 = sources_newest();
+
+    set lr: result<i64> = net_listen(port);
+    check is_err(lr) {
+        fixed em: str = err_msg(lr);
+        echo!("error: {em}");
+        echo!("  Try a different port:  vefna serve 8080");
         exit(1);
         return;
     }
-    echo!("Wove {njobs} of {total_pages} pages, {ncopied} assets copied ({elapsed}ms).");
+    fixed server: i64 = unwrap(lr);
+    echo!("Serving site/ at http://127.0.0.1:{port}  -  rebuilds on change, Ctrl-C to stop");
+    whilst true {
+        fixed client: i64 = net_accept(server);
+        check client >= 0 {
+            // Rebuild first if any source changed since the last request.
+            fixed now: i64 = sources_newest();
+            check now > watermark {
+                set _rb: i64 = run_build(false, drafts, true);
+                watermark = sources_newest();
+            }
+            fixed req: str = net_recv(client);
+            serve_request(client, req);
+            net_close(client);
+        }
+    }
 }
 
 df main() -> void {
@@ -258,18 +479,33 @@ df main() -> void {
         return;
     }
     check cmd == "build" {
-        set clean: bool = false;
-        check argc >= 3 {
-            fixed flag: str = args_get(2);
-            check flag == "--clean" {
-                clean = true;
-            } fallback {
-                echo!("unknown option '{flag}' - did you mean --clean?");
-                exit(1);
-                return;
-            }
+        fixed bf: str = unknown_flag("--clean --drafts --watch");
+        check bf != "" {
+            echo!("unknown option '{bf}' - build accepts --clean, --watch, --drafts.");
+            exit(1);
+            return;
         }
-        cmd_build(clean);
+        cmd_build(has_flag("--clean"), has_flag("--drafts"), has_flag("--watch"));
+        return;
+    }
+    check cmd == "watch" {
+        fixed wf: str = unknown_flag("--clean --drafts");
+        check wf != "" {
+            echo!("unknown option '{wf}' - watch accepts --clean, --drafts.");
+            exit(1);
+            return;
+        }
+        cmd_build(has_flag("--clean"), has_flag("--drafts"), true);
+        return;
+    }
+    check cmd == "serve" {
+        fixed sf: str = unknown_flag("--drafts");
+        check sf != "" {
+            echo!("unknown option '{sf}' - serve accepts [port] and --drafts.");
+            exit(1);
+            return;
+        }
+        cmd_serve(serve_port_arg(), has_flag("--drafts"));
         return;
     }
     echo!("unknown command '{cmd}'");
