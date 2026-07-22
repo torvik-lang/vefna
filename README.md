@@ -8,9 +8,10 @@ pages, which is safer.)*
 
 Vefna reads a folder of Markdown, presses it through your HTML templates, and writes a
 complete static site — ready for GitHub Pages, Cloudflare Pages, Netlify, or any plain web
-server. No runtime, no database, no dependencies: one compiled binary.
+server. No runtime, no database, no dependencies: one compiled binary. A built-in preview
+server (`vefna serve`) rebuilds as you write.
 
-Vefna is also the flagship showcase for **Torvik v1.3.0**: it renders pages in parallel on
+Vefna is also the flagship showcase for **Torvik v1.4.0**: it renders pages in parallel on
 8 `raven` worker threads fed by typed `bridge` channels, and the whole tool is written in
 Torvik itself. On modest hardware it weaves **500+ pages in well under a second**.
 
@@ -46,8 +47,14 @@ static host.
 | `vefna new <name>` | Create a starter site in a new directory |
 | `vefna build` | Build changed pages (incremental) into `site/` |
 | `vefna build --clean` | Delete `site/` and rebuild everything |
+| `vefna build --watch` | Build, then rebuild continuously as sources change |
+| `vefna watch` | Alias for `build --watch` |
+| `vefna serve [port]` | Serve `site/` at `http://127.0.0.1:8000` (or `[port]`), rebuilding on change |
 | `vefna version` | Version information |
 | `vefna help` | Usage |
+
+Pass `--drafts` to `build`, `watch`, or `serve` to include pages marked
+`draft: true` in their front matter (they are skipped by default).
 
 Builds are **incremental**: a page is rewoven only when its source, any template, or
 `vefna.site` is newer than its output. They are also **deterministic**: the same inputs
@@ -147,7 +154,7 @@ Vefna is a standard [rune](https://github.com/torvik-lang/torvik) project:
 rune build --final     # -> build/vefna
 ```
 
-Run the test suite from the project root — 21 cases covering the CLI, golden-file output,
+Run the test suite from the project root — 26 cases covering the CLI, golden-file output, draft handling,
 incremental rebuild behavior, determinism, binary asset round-trips, and error paths:
 
 ```bash
