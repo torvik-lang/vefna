@@ -1,5 +1,19 @@
 # Vefna Changelog
 
+## v1.1.0 - 2026-07
+
+Built with Torvik v1.4.0.
+
+- `vefna serve [port]` — serve `site/` over HTTP on `127.0.0.1` (default port
+  8000) and rebuild automatically when a source file changes before the next
+  request. Built on Torvik's `std::net`; binary assets stream intact.
+- `vefna watch` (and `vefna build --watch`) — rebuild continuously as sources
+  change, until interrupted.
+- `--drafts` — a page with `draft: true` (also `yes` / `1`) in its front matter
+  is skipped by default; pass `--drafts` to `build`, `watch`, or `serve` to
+  include drafts. The default build reports how many were skipped.
+- Test suite grows to 26 cases (adds draft inclusion/exclusion coverage).
+
 ## v1.0.0 - 2026-07-17
 
 The first release, built with Torvik v1.3.0.
