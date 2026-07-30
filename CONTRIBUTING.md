@@ -18,7 +18,8 @@ it small, fast, and predictable are very welcome.
 
 ## Getting set up
 
-1. Install the Torvik toolchain — Vefna v1.0.0 builds with **Torvik v1.3.0**:
+1. Install the Torvik toolchain. Vefna needs at least the version named in
+   `torvik.rune` (currently **Torvik v1.4.0**) — a newer toolchain is fine:
 
    ```
    curl -fsSL https://raw.githubusercontent.com/torvik-lang/torvik/main/linux/install.sh | sh
