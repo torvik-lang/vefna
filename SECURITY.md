@@ -2,15 +2,19 @@
 
 ## Supported Versions
 
-Security fixes land in the newest release. Vefna has a single release line, so
-the table is short:
+Vefna follows the Torvik project's five-year support policy. Each major version gets
+three years of **Active** support (features, bug fixes, security), one year of
+**Maintenance** (bug and security fixes only), and one year of **Security** fixes.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+| Line | Stage | Security fixes until |
+| ---- | ----- | -------------------- |
+| 1.x  | **Active** | 4 July 2031 |
+| < 1.0 | End of life | — |
 
-When a new minor or major version ships, the previous line stops receiving
-fixes — update with the install script or grab the latest release binary.
+Fixes are backported to every line still inside its window, so a 1.x release keeps
+receiving security patches even after a 2.0 ships.
+
+Full policy: [SUPPORT.md](https://github.com/torvik-lang/torvik/blob/main/SUPPORT.md)
 
 ## Reporting a Vulnerability
 
