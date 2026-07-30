@@ -11,9 +11,9 @@ complete static site — ready for GitHub Pages, Cloudflare Pages, Netlify, or a
 server. No runtime, no database, no dependencies: one compiled binary. A built-in preview
 server (`vefna serve`) rebuilds as you write.
 
-Vefna is also the flagship showcase for **Torvik v1.4.0**: it renders pages in parallel on
-8 `raven` worker threads fed by typed `bridge` channels, and the whole tool is written in
-Torvik itself. On modest hardware it weaves **500+ pages in well under a second**.
+Vefna is also the flagship showcase for **Torvik's concurrency**: it renders pages in
+parallel on 8 `raven` worker threads fed by typed `bridge` channels, and the whole tool is
+written in Torvik itself. On modest hardware it weaves **500+ pages in well under a second**.
 
 ## Install
 
